@@ -36,9 +36,11 @@ jobs:
           - name: canada
             url: https://download.geofabrik.de/north-america/canada-latest.osm.pbf
             ram: 12g
+            maxzoom: 12
           - name: australia
             url: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
             ram: 10g
+            maxzoom: 12
       
       fail-fast: false
     
@@ -109,7 +111,7 @@ jobs:
             --osm-path="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf" \
             --output="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles" \
             --minzoom=0 \
-            --maxzoom=13 \
+            --maxzoom=${{ matrix.country.maxzoom || 13 }} \
             --boundary-layer=true \
             --simplify-tolerance=0.1 \
             --download \
@@ -245,7 +247,7 @@ jobs:
             
             ### Details
             - **Min Zoom:** 0
-            - **Max Zoom:** 13 (reduced from 14 for smaller file sizes)
+            - **Max Zoom:** 13 (12 for larger countries like Canada and Australia)
             - **Boundary Layer:** Enabled
             - **Compression:** zstd level 19 (maximum compression)
             - **Source:** [Geofabrik](https://download.geofabrik.de)
