@@ -1,0 +1,297 @@
+name: CI
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  convert-osm-to-mbtiles:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        country:
+          - name: south-korea
+            url: https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
+            ram: 8g
+          - name: japan
+            url: https://download.geofabrik.de/asia/japan-latest.osm.pbf
+            ram: 12g
+          - name: germany
+            url: https://download.geofabrik.de/europe/germany-latest.osm.pbf
+            ram: 12g
+          - name: france
+            url: https://download.geofabrik.de/europe/france-latest.osm.pbf
+            ram: 10g
+          - name: united-kingdom
+            url: https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
+            ram: 10g
+          - name: italy
+            url: https://download.geofabrik.de/europe/italy-latest.osm.pbf
+            ram: 10g
+          - name: spain
+            url: https://download.geofabrik.de/europe/spain-latest.osm.pbf
+            ram: 10g
+          - name: canada
+            url: https://download.geofabrik.de/north-america/canada-latest.osm.pbf
+            ram: 12g
+          - name: australia
+            url: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
+            ram: 10g
+      
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      
+      # zstd 설치 (gzip보다 압축률이 더 좋음)
+      - name: Install zstd
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
+      
+      - name: Check if file exists in repo
+        id: check_existing
+        run: |
+          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst"
+          if git ls-tree -r HEAD --name-only | grep -q "data/$FILE_NAME"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✓ $FILE_NAME already exists in repo"
+            
+            # 기존 파일의 해시 저장
+            git show HEAD:data/$FILE_NAME | sha256sum | awk '{print $1}' > /tmp/old_hash.txt || echo "no-hash" > /tmp/old_hash.txt
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✗ $FILE_NAME does not exist, will create new"
+            echo "no-hash" > /tmp/old_hash.txt
+          fi
+      
+      - name: Cache OSM data
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf
+          key: osm-${{ matrix.country.name }}-${{ steps.date.outputs.date }}
+          restore-keys: |
+            osm-${{ matrix.country.name }}-
+      
+      - name: Download Planetiler
+        run: |
+          echo "Downloading planetiler.jar..."
+          wget -q https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+      
+      - name: Download OSM data
+        run: |
+          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf"
+          if [ ! -f "$FILE_NAME" ]; then
+            echo "Downloading $FILE_NAME..."
+            wget -O "$FILE_NAME" "${{ matrix.country.url }}"
+          else
+            echo "$FILE_NAME already exists (from cache)"
+          fi
+      
+      - name: Convert OSM to MBTiles
+        run: |
+          echo "Converting ${{ matrix.country.name }} to MBTiles..."
+          java -Xmx${{ matrix.country.ram }} \
+            -jar planetiler.jar \
+            --osm-path="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf" \
+            --output="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles" \
+            --minzoom=0 \
+            --maxzoom=13 \
+            --boundary-layer=true \
+            --simplify-tolerance=0.1 \
+            --download \
+            --force
+      
+      - name: Show original file size
+        run: |
+          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles"
+          ls -lh "$FILE_NAME"
+          echo "Original size: $(du -h "$FILE_NAME" | cut -f1)"
+      
+      - name: Compress MBTiles with zstd
+        run: |
+          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles"
+          echo "Compressing $FILE_NAME with zstd (level 19 - maximum compression)..."
+          
+          # zstd 최대 압축 레벨 사용
+          zstd -19 --threads=0 "$FILE_NAME" -o "$FILE_NAME.zst"
+          
+          # 나라 이름만 있는 최신 버전 파일도 생성 (latest용)
+          cp "$FILE_NAME.zst" "${{ matrix.country.name }}.mbtiles.zst"
+          
+          ORIGINAL_SIZE=$(stat -c%s "$FILE_NAME")
+          COMPRESSED_SIZE=$(stat -c%s "$FILE_NAME.zst")
+          COMPRESSION_RATIO=$(awk "BEGIN {printf \"%.2f\", ($ORIGINAL_SIZE-$COMPRESSED_SIZE)*100/$ORIGINAL_SIZE}")
+          
+          echo "✓ Compression complete!"
+          echo "Original size: $(du -h "$FILE_NAME" | cut -f1)"
+          echo "Compressed size: $(du -h "$FILE_NAME.zst" | cut -f1)"
+          echo "Latest version: ${{ matrix.country.name }}.mbtiles.zst"
+          echo "Space saved: ${COMPRESSION_RATIO}%"
+      
+      - name: Check if file changed
+        id: check_changes
+        run: |
+          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst"
+          NEW_HASH=$(sha256sum "$FILE_NAME" | awk '{print $1}')
+          OLD_HASH=$(cat /tmp/old_hash.txt)
+          
+          echo "Old hash: $OLD_HASH"
+          echo "New hash: $NEW_HASH"
+          
+          if [ "$OLD_HASH" = "$NEW_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "⚠️  $FILE_NAME has not changed, skipping upload"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "✓ $FILE_NAME has changed, will upload"
+          fi
+      
+      - name: Upload compressed MBTiles artifact
+        if: steps.check_changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.country.name }}-${{ steps.date.outputs.date }}-mbtiles
+          path: |
+            ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst
+            ${{ matrix.country.name }}.mbtiles.zst
+          retention-days: 30
+          compression-level: 0  # 이미 압축했으므로 추가 압축 안 함
+      
+      - name: Skip upload
+        if: steps.check_changes.outputs.changed == 'false'
+        run: echo "⏭️  Skipping upload for ${{ matrix.country.name }} - no changes detected"
+      
+      - name: Clean up files
+        run: |
+          rm -f ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf
+          rm -f ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles
+
+  create-release:
+    needs: convert-osm-to-mbtiles
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Check if artifacts exist
+        id: check_artifacts
+        run: |
+          if [ -d "artifacts" ] && [ -n "$(find artifacts -name '*.mbtiles.zst' -print -quit)" ]; then
+            echo "has_artifacts=true" >> $GITHUB_OUTPUT
+            echo "✓ Compressed MBTiles artifacts found"
+            echo ""
+            echo "📦 Artifact sizes:"
+            find artifacts -name "*.mbtiles.zst" -exec ls -lh {} \;
+          else
+            echo "has_artifacts=false" >> $GITHUB_OUTPUT
+            echo "⚠️  No MBTiles artifacts found, skipping release creation"
+          fi
+      
+      - name: Create Release
+        if: steps.check_artifacts.outputs.has_artifacts == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mbtiles-${{ steps.date.outputs.date }}
+          name: 🗺️ Daily MBTiles - ${{ steps.date.outputs.date }}
+          body: |
+            ## Daily MBTiles Update (Compressed)
+            
+            **Date:** ${{ steps.date.outputs.date }}
+            
+            This release includes **zstd-compressed** MBTiles files for the following countries:
+            - 🇰🇷 South Korea
+            - 🇯🇵 Japan
+            - 🇩🇪 Germany
+            - 🇫🇷 France
+            - 🇬🇧 United Kingdom
+            - 🇮🇹 Italy
+            - 🇪🇸 Spain
+            - 🇨🇦 Canada
+            - 🇦🇺 Australia
+            
+            ### 📦 File Types
+            
+            Each country has two files:
+            1. **`country-YYMMDD.mbtiles.zst`** - Dated version for archival
+            2. **`country.mbtiles.zst`** - Latest version (always points to today's data)
+            
+            💡 **Tip:** Use the dated files for reproducibility, or the country-only named files for always getting the latest data.
+            
+            ### Details
+            - **Min Zoom:** 0
+            - **Max Zoom:** 13 (reduced from 14 for smaller file sizes)
+            - **Boundary Layer:** Enabled
+            - **Compression:** zstd level 19 (maximum compression)
+            - **Source:** [Geofabrik](https://download.geofabrik.de)
+            - **Tool:** [Planetiler](https://github.com/onthegomap/planetiler)
+            
+            ### 📥 How to use
+            
+            Download the `.mbtiles.zst` file and decompress it:
+            
+            ```bash
+            # Install zstd if needed
+            # Ubuntu/Debian: sudo apt-get install zstd
+            # macOS: brew install zstd
+            # Windows: https://github.com/facebook/zstd/releases
+            
+            # Decompress
+            zstd -d country-name-YYMMDD.mbtiles.zst
+            # or
+            zstd -d country-name.mbtiles.zst
+            ```
+            
+            Or use this one-liner to download and decompress:
+            ```bash
+            wget -qO- <download-url> | zstd -d > output.mbtiles
+            ```
+            
+            ### 📍 Example URLs
+            
+            For dated version:
+            ```
+            https://github.com/PedalLog/MapFiles/releases/download/mbtiles-${{ steps.date.outputs.date }}/south-korea-${{ steps.date.outputs.date }}.mbtiles.zst
+            ```
+            
+            For latest version:
+            ```
+            https://github.com/PedalLog/MapFiles/releases/download/mbtiles-${{ steps.date.outputs.date }}/south-korea.mbtiles.zst
+            ```
+            
+            ---
+            
+            🤖 *This is an automated release generated by GitHub Actions*
+          files: artifacts/**/*.mbtiles.zst
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
+      
+      - name: Skip release creation
+        if: steps.check_artifacts.outputs.has_artifacts == 'false'
+        run: echo "⏭️  No artifacts found, skipping release creation"

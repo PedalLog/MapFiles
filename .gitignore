@@ -1,0 +1,52 @@
+# Ignore OSM and MBTiles files (too large for git)
+*.osm.pbf
+*.mbtiles
+
+# Except for explicitly tracked files in data/
+!data/*.mbtiles
+
+# Large source data files
+data/sources/*.zip
+data/sources/*.sqlite
+data/sources/*.sqlite.zip
+
+# Planetiler jar file (too large)
+planetiler.jar
+
+# Planetiler temporary files
+data/tmp/
+*.tmp
+
+# Java
+*.class
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules (if using any JS tools)
+node_modules/
+
+# Python (if using any Python tools)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
