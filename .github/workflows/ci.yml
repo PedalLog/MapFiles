@@ -85,18 +85,32 @@ jobs:
             --maxzoom=${{ matrix.country.maxzoom }} \
             --boundary-layer=true \
             --simplify-tolerance=0.1 \
+            --natural-earth-path=data/sources/natural_earth_vector.sqlite.zip \
+            --water-polygons-path=data/sources/water-polygons-split-3857.zip \
             --force
+
+      - name: Get current date
+        id: date
+        run: |
+          echo "yymmdd=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
 
       - name: Compress MBTiles
         run: |
+          # Create dated version
           zstd -15 --threads=0 "${{ matrix.country.name }}.mbtiles" \
-            -o "${{ matrix.country.name }}.mbtiles.zst"
+            -o "${{ matrix.country.name }}-${{ steps.date.outputs.yymmdd }}.mbtiles.zst"
+          
+          # Create latest version (copy of dated version)
+          cp "${{ matrix.country.name }}-${{ steps.date.outputs.yymmdd }}.mbtiles.zst" \
+            "${{ matrix.country.name }}.mbtiles.zst"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.country.name }}
-          path: ${{ matrix.country.name }}.mbtiles.zst
+          path: |
+            ${{ matrix.country.name }}-${{ steps.date.outputs.yymmdd }}.mbtiles.zst
+            ${{ matrix.country.name }}.mbtiles.zst
           compression-level: 0
 
       - name: Cleanup
@@ -119,6 +133,7 @@ jobs:
         run: |
           echo "tag=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "title=$(date +'%Y/%m/%d')" >> $GITHUB_OUTPUT
+          echo "yymmdd=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -138,6 +153,11 @@ jobs:
             ### Countries
             South Korea, Japan, Germany, France, United Kingdom, Italy, Spain, Canada, Australia
 
+            ### File Formats
+            Each country has two versions:
+            - **`country-${{ steps.date.outputs.yymmdd }}.mbtiles.zst`** - Dated version for archival
+            - **`country.mbtiles.zst`** - Latest version (always current)
+
             ### Details
             - Min Zoom: 0
             - Boundary Layer: Enabled
@@ -147,7 +167,11 @@ jobs:
 
             ### Decompress
             ```bash
+            # Decompress latest version
             zstd -d country.mbtiles.zst
+            
+            # Or decompress dated version
+            zstd -d country-${{ steps.date.outputs.yymmdd }}.mbtiles.zst
             ```
 
             ---
