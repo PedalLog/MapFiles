@@ -2,7 +2,7 @@ name: CI
 
 # This workflow converts OpenStreetMap data from Geofabrik to compressed MBTiles format
 # It runs daily at 12:00 UTC and can also be triggered manually
-# Each country is processed in parallel (max 2 concurrent jobs) with optimized zoom levels
+# Each country is processed in parallel with max 2 concurrent jobs (see strategy.max-parallel below)
 
 on:
   schedule:
@@ -207,7 +207,7 @@ jobs:
 
             ### Details
             - Min Zoom: 0
-            - Max Zoom: Varies by country (11-13)
+            - Max Zoom: 11-13 (country-dependent: 13 for S. Korea, 12 for most, 11 for Canada/Australia)
             - Boundary Layer: Enabled
             - Compression: zstd level 19 (maximum)
             - Tool: Planetiler v0.10.0
