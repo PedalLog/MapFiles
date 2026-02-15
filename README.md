@@ -22,16 +22,18 @@ This repository automatically downloads and converts OSM data from [Geofabrik](h
 
 ### Conversion Settings
 - **Min Zoom:** 0
-- **Max Zoom:** 13 (reduced from 14 for smaller file sizes)
+- **Max Zoom:** Varies by country for optimal file size:
+  - **13:** South Korea
+  - **12:** Japan, Germany, France, UK, Italy, Spain
+  - **11:** Canada, Australia
 - **Boundary Layer:** Enabled
 - **Simplify Tolerance:** 0.1
 - **Compression:** zstd level 19 (maximum compression)
 - **Format:** MBTiles (.mbtiles.zst)
 
 ### Memory Allocation
-- Small countries (8GB): South Korea
-- Medium countries (10GB): France, UK, Italy, Spain, Australia
-- Large countries (12GB): Japan, Germany, Canada
+- South Korea: 6GB
+- Most countries: 7GB (Japan, Germany, France, UK, Italy, Spain, Canada, Australia)
 
 ## 🤖 Automation
 
@@ -54,7 +56,8 @@ project/
  ├── data/
  │   ├── sources/
  │   │   ├── natural_earth_vector.sqlite.zip
- │   │   └── water-polygons-split-3857.zip
+ │   │   ├── water-polygons-split-3857.zip
+ │   │   └── lake_centerline.shp.zip
  │   └── {country}-{YYMMDD}.mbtiles.zst
  └── README.md
 ```
@@ -143,7 +146,10 @@ wget -O data/sources/natural_earth_vector.sqlite.zip \
 wget -O data/sources/water-polygons-split-3857.zip \
   https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip
 
-# Convert OSM to MBTiles
+wget -O data/sources/lake_centerline.shp.zip \
+  https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip
+
+# Convert OSM to MBTiles (adjust maxzoom based on country size)
 java -Xmx16g -jar planetiler.jar \
   --osm-path={country}-{date}.osm.pbf \
   --output={country}-{date}.mbtiles \
@@ -155,7 +161,7 @@ java -Xmx16g -jar planetiler.jar \
   --water-polygons-path=data/sources/water-polygons-split-3857.zip \
   --force
 
-# Compress with zstd
+# Compress with zstd (maximum compression)
 zstd -19 --threads=0 {country}-{date}.mbtiles -o {country}-{date}.mbtiles.zst
 ```
 

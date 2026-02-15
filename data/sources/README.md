@@ -19,6 +19,14 @@ This directory contains large geographic data files required by Planetiler for m
 - **Purpose:** Pre-processed water polygon data for better water body rendering
 - **License:** Public Domain
 
+### Lake Centerlines
+- **File:** `lake_centerline.shp.zip`
+- **Size:** ~77 MB
+- **Source:** https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip
+- **Purpose:** Provides lake centerline data for better lake rendering
+- **License:** ODbL (OSM-derived data)
+- **Note:** This is automatically downloaded and used by the CI workflow
+
 ## Automatic Download
 
 These files are automatically downloaded by the CI workflow and cached for subsequent runs. This approach:
@@ -44,11 +52,10 @@ wget -O data/sources/water-polygons-split-3857.zip \
   --timeout=300 --tries=3 --retry-connrefused || \
 wget -O data/sources/water-polygons-split-3857.zip \
   https://github.com/osmdata/water-polygons/releases/download/latest/water-polygons-split-3857.zip
-```
 
-### Lake Centerlines (Optional, 77 MB)
-```bash
-wget https://github.com/lukasmartinelli/osm-lakelines/releases/download/v0.9/lake_centerline.shp.zip -P data/sources/
+# Download Lake Centerlines
+wget -O data/sources/lake_centerline.shp.zip \
+  https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip
 ```
 
 ## Note
