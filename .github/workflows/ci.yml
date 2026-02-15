@@ -15,32 +15,47 @@ jobs:
           - name: south-korea
             url: https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
             ram: 8g
+            maxzoom: 13
+
           - name: japan
             url: https://download.geofabrik.de/asia/japan-latest.osm.pbf
             ram: 12g
+            maxzoom: 12
+
           - name: germany
             url: https://download.geofabrik.de/europe/germany-latest.osm.pbf
             ram: 12g
+            maxzoom: 12
+
           - name: france
             url: https://download.geofabrik.de/europe/france-latest.osm.pbf
             ram: 10g
+            maxzoom: 12
+
           - name: united-kingdom
             url: https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
             ram: 10g
+            maxzoom: 12
+
           - name: italy
             url: https://download.geofabrik.de/europe/italy-latest.osm.pbf
             ram: 10g
+            maxzoom: 12
+
           - name: spain
             url: https://download.geofabrik.de/europe/spain-latest.osm.pbf
             ram: 10g
+            maxzoom: 12
+
           - name: canada
             url: https://download.geofabrik.de/north-america/canada-latest.osm.pbf
             ram: 12g
-            maxzoom: 12
+            maxzoom: 11
+
           - name: australia
             url: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
             ram: 10g
-            maxzoom: 12
+            maxzoom: 11
       
       fail-fast: false
     
@@ -56,7 +71,6 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       
-      # zstd 설치 (gzip보다 압축률이 더 좋음)
       - name: Install zstd
         run: sudo apt-get update && sudo apt-get install -y zstd
       
@@ -70,13 +84,9 @@ jobs:
           FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst"
           if git ls-tree -r HEAD --name-only | grep -q "data/$FILE_NAME"; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✓ $FILE_NAME already exists in repo"
-            
-            # 기존 파일의 해시 저장
             git show HEAD:data/$FILE_NAME | sha256sum | awk '{print $1}' > /tmp/old_hash.txt || echo "no-hash" > /tmp/old_hash.txt
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✗ $FILE_NAME does not exist, will create new"
             echo "no-hash" > /tmp/old_hash.txt
           fi
       
@@ -89,23 +99,17 @@ jobs:
             osm-${{ matrix.country.name }}-
       
       - name: Download Planetiler
-        run: |
-          echo "Downloading planetiler.jar..."
-          wget -q https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+        run: wget -q https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
       
       - name: Download OSM data
         run: |
           FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf"
           if [ ! -f "$FILE_NAME" ]; then
-            echo "Downloading $FILE_NAME..."
             wget -O "$FILE_NAME" "${{ matrix.country.url }}"
-          else
-            echo "$FILE_NAME already exists (from cache)"
           fi
       
       - name: Convert OSM to MBTiles
         run: |
-          echo "Converting ${{ matrix.country.name }} to MBTiles..."
           java -Xmx${{ matrix.country.ram }} \
             -jar planetiler.jar \
             --osm-path="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf" \
@@ -117,53 +121,13 @@ jobs:
             --download \
             --force
       
-      - name: Show original file size
-        run: |
-          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles"
-          ls -lh "$FILE_NAME"
-          echo "Original size: $(du -h "$FILE_NAME" | cut -f1)"
-      
       - name: Compress MBTiles with zstd
         run: |
           FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles"
-          echo "Compressing $FILE_NAME with zstd (level 19 - maximum compression)..."
-          
-          # zstd 최대 압축 레벨 사용
           zstd -19 --threads=0 "$FILE_NAME" -o "$FILE_NAME.zst"
-          
-          # 나라 이름만 있는 최신 버전 파일도 생성 (latest용)
           cp "$FILE_NAME.zst" "${{ matrix.country.name }}.mbtiles.zst"
-          
-          ORIGINAL_SIZE=$(stat -c%s "$FILE_NAME")
-          COMPRESSED_SIZE=$(stat -c%s "$FILE_NAME.zst")
-          COMPRESSION_RATIO=$(awk "BEGIN {printf \"%.2f\", ($ORIGINAL_SIZE-$COMPRESSED_SIZE)*100/$ORIGINAL_SIZE}")
-          
-          echo "✓ Compression complete!"
-          echo "Original size: $(du -h "$FILE_NAME" | cut -f1)"
-          echo "Compressed size: $(du -h "$FILE_NAME.zst" | cut -f1)"
-          echo "Latest version: ${{ matrix.country.name }}.mbtiles.zst"
-          echo "Space saved: ${COMPRESSION_RATIO}%"
-      
-      - name: Check if file changed
-        id: check_changes
-        run: |
-          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst"
-          NEW_HASH=$(sha256sum "$FILE_NAME" | awk '{print $1}')
-          OLD_HASH=$(cat /tmp/old_hash.txt)
-          
-          echo "Old hash: $OLD_HASH"
-          echo "New hash: $NEW_HASH"
-          
-          if [ "$OLD_HASH" = "$NEW_HASH" ]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "⚠️  $FILE_NAME has not changed, skipping upload"
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "✓ $FILE_NAME has changed, will upload"
-          fi
       
       - name: Upload compressed MBTiles artifact
-        if: steps.check_changes.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.country.name }}-${{ steps.date.outputs.date }}-mbtiles
@@ -171,11 +135,7 @@ jobs:
             ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst
             ${{ matrix.country.name }}.mbtiles.zst
           retention-days: 30
-          compression-level: 0  # 이미 압축했으므로 추가 압축 안 함
-      
-      - name: Skip upload
-        if: steps.check_changes.outputs.changed == 'false'
-        run: echo "⏭️  Skipping upload for ${{ matrix.country.name }} - no changes detected"
+          compression-level: 0
       
       - name: Clean up files
         run: |
@@ -247,7 +207,7 @@ jobs:
             
             ### Details
             - **Min Zoom:** 0
-            - **Max Zoom:** 13 (12 for larger countries like Canada and Australia)
+            - **Max Zoom:** 13 (South Korea), 12 (Japan & Europe), 11 (Canada & Australia)
             - **Boundary Layer:** Enabled
             - **Compression:** zstd level 19 (maximum compression)
             - **Source:** [Geofabrik](https://download.geofabrik.de)
