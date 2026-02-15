@@ -1,5 +1,9 @@
 name: CI
 
+# This workflow converts OpenStreetMap data from Geofabrik to compressed MBTiles format
+# It runs daily at 12:00 UTC and can also be triggered manually
+# Each country is processed in parallel (max 2 concurrent jobs) with optimized zoom levels
+
 on:
   schedule:
     - cron: '0 12 * * *'
@@ -47,36 +51,67 @@ jobs:
         run: |
           mkdir -p data/sources
 
+          # Download water polygons with retry logic
           if [ ! -f data/sources/water-polygons-split-3857.zip ]; then
+            echo "Downloading water polygons..."
             wget --tries=5 --timeout=60 \
               https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip \
-              -O data/sources/water-polygons-split-3857.zip
+              -O data/sources/water-polygons-split-3857.zip || {
+                echo "Failed to download water polygons"
+                exit 1
+              }
+          else
+            echo "Using cached water polygons"
           fi
 
+          # Download lake centerlines with retry logic
           if [ ! -f data/sources/lake_centerline.shp.zip ]; then
+            echo "Downloading lake centerlines..."
             wget --tries=5 --timeout=60 \
               https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip \
-              -O data/sources/lake_centerline.shp.zip
+              -O data/sources/lake_centerline.shp.zip || {
+                echo "Failed to download lake centerlines"
+                exit 1
+              }
+          else
+            echo "Using cached lake centerlines"
           fi
 
+          # Download Natural Earth data with retry logic
           if [ ! -f data/sources/natural_earth_vector.sqlite.zip ]; then
+            echo "Downloading Natural Earth data..."
             wget --tries=5 --timeout=60 \
               https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip \
-              -O data/sources/natural_earth_vector.sqlite.zip
+              -O data/sources/natural_earth_vector.sqlite.zip || {
+                echo "Failed to download Natural Earth data"
+                exit 1
+              }
+          else
+            echo "Using cached Natural Earth data"
           fi
 
       - name: Download OSM
         run: |
           if [ ! -f "${{ matrix.country.name }}.osm.pbf" ]; then
-            wget -O "${{ matrix.country.name }}.osm.pbf" "${{ matrix.country.url }}"
+            echo "Downloading OSM data for ${{ matrix.country.name }}..."
+            wget --tries=5 --timeout=300 -O "${{ matrix.country.name }}.osm.pbf" "${{ matrix.country.url }}" || {
+              echo "Failed to download OSM data for ${{ matrix.country.name }}"
+              exit 1
+            }
+          else
+            echo "Using cached OSM data for ${{ matrix.country.name }}"
           fi
 
       - name: Download Planetiler
         run: |
-          wget -q https://github.com/onthegomap/planetiler/releases/download/v0.10.0/planetiler.jar
+          wget --tries=5 --timeout=60 -q https://github.com/onthegomap/planetiler/releases/download/v0.10.0/planetiler.jar || {
+            echo "Failed to download Planetiler after 5 attempts"
+            exit 1
+          }
 
       - name: Convert OSM → MBTiles
         run: |
+          echo "Converting ${{ matrix.country.name }} OSM data to MBTiles..."
           java -Xmx${{ matrix.country.ram }} \
             -jar planetiler.jar \
             --osm-path="${{ matrix.country.name }}.osm.pbf" \
@@ -88,6 +123,14 @@ jobs:
             --natural-earth-path=data/sources/natural_earth_vector.sqlite.zip \
             --water-polygons-path=data/sources/water-polygons-split-3857.zip \
             --force
+          
+          # Verify output file was created
+          if [ ! -f "${{ matrix.country.name }}.mbtiles" ]; then
+            echo "ERROR: MBTiles file was not created"
+            exit 1
+          fi
+          
+          echo "Conversion completed successfully. File size: $(du -h ${{ matrix.country.name }}.mbtiles | cut -f1)"
 
       - name: Get current date
         id: date
@@ -96,8 +139,8 @@ jobs:
 
       - name: Compress MBTiles
         run: |
-          # Create dated version
-          zstd -15 --threads=0 "${{ matrix.country.name }}.mbtiles" \
+          # Create dated version with maximum compression (level 19)
+          zstd -19 --threads=0 "${{ matrix.country.name }}.mbtiles" \
             -o "${{ matrix.country.name }}-${{ steps.date.outputs.yymmdd }}.mbtiles.zst"
           
           # Create latest version (copy of dated version)
@@ -114,9 +157,13 @@ jobs:
           compression-level: 0
 
       - name: Cleanup
+        if: always()
         run: |
+          # Clean up large temporary files to save disk space
+          echo "Cleaning up temporary files..."
           rm -f *.osm.pbf
           rm -f *.mbtiles
+          echo "Cleanup completed"
 
   create-release:
     needs: convert-osm-to-mbtiles
@@ -160,10 +207,12 @@ jobs:
 
             ### Details
             - Min Zoom: 0
+            - Max Zoom: Varies by country (11-13)
             - Boundary Layer: Enabled
-            - Compression: zstd level 15
-            - Tool: Planetiler
-            - Source: Geofabrik
+            - Compression: zstd level 19 (maximum)
+            - Tool: Planetiler v0.10.0
+            - Source: Geofabrik OSM data
+            - Additional Data: Natural Earth, Water Polygons, Lake Centerlines
 
             ### Decompress
             ```bash
