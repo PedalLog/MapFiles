@@ -8,252 +8,138 @@ on:
 jobs:
   convert-osm-to-mbtiles:
     runs-on: ubuntu-latest
-    
+
     strategy:
+      max-parallel: 2
+      fail-fast: false
       matrix:
         country:
-          - name: south-korea
-            url: https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
-            ram: 8g
-            maxzoom: 13
+          - { name: south-korea, url: https://download.geofabrik.de/asia/south-korea-latest.osm.pbf, ram: 6g, maxzoom: 13 }
+          - { name: japan, url: https://download.geofabrik.de/asia/japan-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: germany, url: https://download.geofabrik.de/europe/germany-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: france, url: https://download.geofabrik.de/europe/france-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: united-kingdom, url: https://download.geofabrik.de/europe/great-britain-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: italy, url: https://download.geofabrik.de/europe/italy-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: spain, url: https://download.geofabrik.de/europe/spain-latest.osm.pbf, ram: 7g, maxzoom: 12 }
+          - { name: canada, url: https://download.geofabrik.de/north-america/canada-latest.osm.pbf, ram: 7g, maxzoom: 11 }
+          - { name: australia, url: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf, ram: 7g, maxzoom: 11 }
 
-          - name: japan
-            url: https://download.geofabrik.de/asia/japan-latest.osm.pbf
-            ram: 12g
-            maxzoom: 12
-
-          - name: germany
-            url: https://download.geofabrik.de/europe/germany-latest.osm.pbf
-            ram: 12g
-            maxzoom: 12
-
-          - name: france
-            url: https://download.geofabrik.de/europe/france-latest.osm.pbf
-            ram: 10g
-            maxzoom: 12
-
-          - name: united-kingdom
-            url: https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
-            ram: 10g
-            maxzoom: 12
-
-          - name: italy
-            url: https://download.geofabrik.de/europe/italy-latest.osm.pbf
-            ram: 10g
-            maxzoom: 12
-
-          - name: spain
-            url: https://download.geofabrik.de/europe/spain-latest.osm.pbf
-            ram: 10g
-            maxzoom: 12
-
-          - name: canada
-            url: https://download.geofabrik.de/north-america/canada-latest.osm.pbf
-            ram: 12g
-            maxzoom: 11
-
-          - name: australia
-            url: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
-            ram: 10g
-            maxzoom: 11
-      
-      fail-fast: false
-    
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Set up JDK 21
+
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
-      
-      - name: Install zstd
-        run: sudo apt-get update && sudo apt-get install -y zstd
-      
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
-      
-      - name: Check if file exists in repo
-        id: check_existing
-        run: |
-          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst"
-          if git ls-tree -r HEAD --name-only | grep -q "data/$FILE_NAME"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            git show HEAD:data/$FILE_NAME | sha256sum | awk '{print $1}' > /tmp/old_hash.txt || echo "no-hash" > /tmp/old_hash.txt
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "no-hash" > /tmp/old_hash.txt
-          fi
-      
-      - name: Cache OSM data
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y zstd wget unzip
+
+      - name: Cache planetiler data
         uses: actions/cache@v4
         with:
-          path: ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf
-          key: osm-${{ matrix.country.name }}-${{ steps.date.outputs.date }}
-          restore-keys: |
-            osm-${{ matrix.country.name }}-
-      
-      - name: Download Planetiler
-        run: wget -q https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-      
-      - name: Download OSM data
+          path: data
+          key: planetiler-data-v1
+
+      - name: Prepare planetiler sources
         run: |
-          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf"
-          if [ ! -f "$FILE_NAME" ]; then
-            wget -O "$FILE_NAME" "${{ matrix.country.url }}"
+          mkdir -p data/sources
+          if [ ! -f data/sources/water-polygons.zip ]; then
+            wget --tries=5 --timeout=60 \
+              https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip \
+              -O data/sources/water-polygons.zip
           fi
-      
-      - name: Convert OSM to MBTiles
+
+      - name: Download OSM
+        run: |
+          if [ ! -f "${{ matrix.country.name }}.osm.pbf" ]; then
+            wget -O "${{ matrix.country.name }}.osm.pbf" "${{ matrix.country.url }}"
+          fi
+
+      - name: Download Planetiler
+        run: |
+          wget -q https://github.com/onthegomap/planetiler/releases/download/v0.10.0/planetiler.jar
+
+      - name: Convert OSM → MBTiles
         run: |
           java -Xmx${{ matrix.country.ram }} \
             -jar planetiler.jar \
-            --osm-path="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf" \
-            --output="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles" \
+            --osm-path="${{ matrix.country.name }}.osm.pbf" \
+            --output="${{ matrix.country.name }}.mbtiles" \
             --minzoom=0 \
-            --maxzoom=${{ matrix.country.maxzoom || 13 }} \
+            --maxzoom=${{ matrix.country.maxzoom }} \
             --boundary-layer=true \
             --simplify-tolerance=0.1 \
-            --download \
             --force
-      
-      - name: Compress MBTiles with zstd
+
+      - name: Compress MBTiles
         run: |
-          FILE_NAME="${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles"
-          zstd -19 --threads=0 "$FILE_NAME" -o "$FILE_NAME.zst"
-          cp "$FILE_NAME.zst" "${{ matrix.country.name }}.mbtiles.zst"
-      
-      - name: Upload compressed MBTiles artifact
+          zstd -15 --threads=0 "${{ matrix.country.name }}.mbtiles" \
+            -o "${{ matrix.country.name }}.mbtiles.zst"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.country.name }}-${{ steps.date.outputs.date }}-mbtiles
-          path: |
-            ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles.zst
-            ${{ matrix.country.name }}.mbtiles.zst
-          retention-days: 30
+          name: ${{ matrix.country.name }}
+          path: ${{ matrix.country.name }}.mbtiles.zst
           compression-level: 0
-      
-      - name: Clean up files
+
+      - name: Cleanup
         run: |
-          rm -f ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.osm.pbf
-          rm -f ${{ matrix.country.name }}-${{ steps.date.outputs.date }}.mbtiles
+          rm -f *.osm.pbf
+          rm -f *.mbtiles
 
   create-release:
     needs: convert-osm-to-mbtiles
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Get current date
         id: date
-        run: echo "date=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
-      
-      - name: Download all artifacts
+        run: |
+          echo "tag=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "title=$(date +'%Y/%m/%d')" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
-      - name: Check if artifacts exist
-        id: check_artifacts
-        run: |
-          if [ -d "artifacts" ] && [ -n "$(find artifacts -name '*.mbtiles.zst' -print -quit)" ]; then
-            echo "has_artifacts=true" >> $GITHUB_OUTPUT
-            echo "✓ Compressed MBTiles artifacts found"
-            echo ""
-            echo "📦 Artifact sizes:"
-            find artifacts -name "*.mbtiles.zst" -exec ls -lh {} \;
-          else
-            echo "has_artifacts=false" >> $GITHUB_OUTPUT
-            echo "⚠️  No MBTiles artifacts found, skipping release creation"
-          fi
-      
+
       - name: Create Release
-        if: steps.check_artifacts.outputs.has_artifacts == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.date.outputs.date }}
-          name: ${{ steps.date.outputs.date }}
+          tag_name: ${{ steps.date.outputs.tag }}
+          name: ${{ steps.date.outputs.title }}
           body: |
-            ## Daily MBTiles Update (Compressed)
-            
-            **Date:** ${{ steps.date.outputs.date }}
-            
-            This release includes **zstd-compressed** MBTiles files for the following countries:
-            - 🇰🇷 South Korea
-            - 🇯🇵 Japan
-            - 🇩🇪 Germany
-            - 🇫🇷 France
-            - 🇬🇧 United Kingdom
-            - 🇮🇹 Italy
-            - 🇪🇸 Spain
-            - 🇨🇦 Canada
-            - 🇦🇺 Australia
-            
-            ### 📦 File Types
-            
-            Each country has two files:
-            1. **`country-YYMMDD.mbtiles.zst`** - Dated version for archival
-            2. **`country.mbtiles.zst`** - Latest version (always points to today's data)
-            
-            💡 **Tip:** Use the dated files for reproducibility, or the country-only named files for always getting the latest data.
-            
+            ## Daily MBTiles Update
+
+            **Date:** ${{ steps.date.outputs.title }}
+
+            ### Countries
+            South Korea, Japan, Germany, France, UK, Italy, Spain, Canada, Australia
+
             ### Details
-            - **Min Zoom:** 0
-            - **Max Zoom:** 13 (South Korea), 12 (Japan & Europe), 11 (Canada & Australia)
-            - **Boundary Layer:** Enabled
-            - **Compression:** zstd level 19 (maximum compression)
-            - **Source:** [Geofabrik](https://download.geofabrik.de)
-            - **Tool:** [Planetiler](https://github.com/onthegomap/planetiler)
-            
-            ### 📥 How to use
-            
-            Download the `.mbtiles.zst` file and decompress it:
-            
+            - Min Zoom: 0
+            - Boundary Layer: Enabled
+            - Compression: zstd level 15
+            - Tool: Planetiler
+            - Source: Geofabrik
+
+            ### Decompress
             ```bash
-            # Install zstd if needed
-            # Ubuntu/Debian: sudo apt-get install zstd
-            # macOS: brew install zstd
-            # Windows: https://github.com/facebook/zstd/releases
-            
-            # Decompress
-            zstd -d country-name-YYMMDD.mbtiles.zst
-            # or
-            zstd -d country-name.mbtiles.zst
+            zstd -d country.mbtiles.zst
             ```
-            
-            Or use this one-liner to download and decompress:
-            ```bash
-            wget -qO- <download-url> | zstd -d > output.mbtiles
-            ```
-            
-            ### 📍 Example URLs
-            
-            For dated version:
-            ```
-            https://github.com/PedalLog/MapFiles/releases/download/${{ steps.date.outputs.date }}/south-korea-${{ steps.date.outputs.date }}.mbtiles.zst
-            ```
-            
-            For latest version:
-            ```
-            https://github.com/PedalLog/MapFiles/releases/latest/download/south-korea.mbtiles.zst
-            ```
-            
+
             ---
-            
-            🤖 *This is an automated release generated by GitHub Actions*
-          files: artifacts/**/*.mbtiles.zst
+            🤖 Automated via GitHub Actions
+          files: artifacts/**/*.zst
           token: ${{ secrets.GITHUB_TOKEN }}
-          draft: false
+          draft: true
           prerelease: false
-      
-      - name: Skip release creation
-        if: steps.check_artifacts.outputs.has_artifacts == 'false'
-        run: echo "⏭️  No artifacts found, skipping release creation"
