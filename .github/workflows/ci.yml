@@ -85,6 +85,8 @@ jobs:
             --maxzoom=${{ matrix.country.maxzoom }} \
             --boundary-layer=true \
             --simplify-tolerance=0.1 \
+            --natural-earth-path=data/sources/natural_earth_vector.sqlite.zip \
+            --water-polygons-path=data/sources/water-polygons-split-3857.zip \
             --force
 
       - name: Compress MBTiles
