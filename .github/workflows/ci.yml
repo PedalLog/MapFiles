@@ -37,33 +37,28 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y zstd wget unzip
 
-      # Planetiler 외부 데이터 캐시
       - name: Cache planetiler data
         uses: actions/cache@v4
         with:
           path: data
-          key: planetiler-data-v2
+          key: planetiler-data-v3
 
-      # 외부 리소스 3종 사전 다운로드
       - name: Prepare planetiler sources
         run: |
           mkdir -p data/sources
 
-          # water polygons
-          if [ ! -f data/sources/water-polygons.zip ]; then
+          if [ ! -f data/sources/water-polygons-split-3857.zip ]; then
             wget --tries=5 --timeout=60 \
               https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip \
-              -O data/sources/water-polygons.zip
+              -O data/sources/water-polygons-split-3857.zip
           fi
 
-          # lake centerlines
           if [ ! -f data/sources/lake_centerline.shp.zip ]; then
             wget --tries=5 --timeout=60 \
               https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip \
               -O data/sources/lake_centerline.shp.zip
           fi
 
-          # natural earth
           if [ ! -f data/sources/natural_earth_vector.sqlite.zip ]; then
             wget --tries=5 --timeout=60 \
               https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip \
